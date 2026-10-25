@@ -2,12 +2,12 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import { useApp } from "../context/AppContext";
+import { useAuth } from "../context/AuthContext"; 
 import { 
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell, Legend
 } from "recharts";
 
-// Mock data for the charts
 const revenueData = [
   { name: "Mon", sales: 4000 }, { name: "Tue", sales: 3000 },
   { name: "Wed", sales: 5000 }, { name: "Thu", sales: 4500 },
@@ -19,6 +19,7 @@ const COLORS = ['#d70f64', '#0056b3', '#00b894', '#fdcb6e'];
 
 const AdminDashboard = () => {
   const navigate = useNavigate();
+  const { logout, currentUser } = useAuth(); 
   const { restaurants, addRestaurant, orders } = useApp();
   
   const [newRest, setNewRest] = useState({ name: "", cuisine: "", image: "", deliveryTime: "30-40 min", deliveryFee: 50, rating: 4.5, minOrder: 200 });
@@ -26,28 +27,41 @@ const AdminDashboard = () => {
   const handleAddRestaurant = (e) => {
     e.preventDefault();
     if (!newRest.name || !newRest.cuisine) return alert("Please fill required fields");
+    
+    // Generate a unique ID for this restaurant
+    const generatedId = `rest_${Date.now()}`;
+
     addRestaurant({
       ...newRest,
+      id: generatedId, // Save the generated ID
       deliveryFee: Number(newRest.deliveryFee),
+      rating: Number(newRest.rating) || 4.0,
+      minOrder: Number(newRest.minOrder) || 200,
       image: newRest.image || "https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?w=500"
     });
-    alert("Restaurant added successfully!");
+    
+    alert(`Restaurant added! The Restaurant ID is: ${generatedId}`);
     setNewRest({ name: "", cuisine: "", image: "", deliveryTime: "30-40 min", deliveryFee: 50, rating: 4.5, minOrder: 200 });
   };
 
-  // Prepare data for the Donut Chart based on the actual restaurants in state
+  const handleLogout = async () => {
+    await logout();
+    navigate("/auth");
+  };
+
   const pieData = restaurants.slice(0, 4).map((r, index) => ({
     name: r.name,
-    value: 4000 - (index * 500) + Math.random() * 1000 // Mock sales data per restaurant
+    value: 4000 - (index * 500) + Math.random() * 1000
   }));
 
   return (
     <div style={{ padding: "40px", background: "#eef2f5", minHeight: "100vh" }}>
-      <button onClick={() => navigate("/")} style={{ marginBottom: "20px", cursor: "pointer", border: "none", background: "none", color: "#0056b3", fontWeight: "bold", fontSize: "16px" }}>← Logout</button>
+      <button onClick={handleLogout} style={{ marginBottom: "20px", cursor: "pointer", border: "none", background: "none", color: "#0056b3", fontWeight: "bold", fontSize: "16px" }}>← Logout</button>
       
-      <motion.h1 initial={{ opacity: 0, y: -20 }} animate={{ opacity: 1, y: 0 }} style={{ marginBottom: "30px", color: "#0056b3" }}>GB Panda Admin ⚙️</motion.h1>
+      <motion.h1 initial={{ opacity: 0, y: -20 }} animate={{ opacity: 1, y: 0 }} style={{ marginBottom: "30px", color: "#0056b3" }}>
+        GB Panda Admin ⚙️ <span style={{ fontSize: "16px", color: "#666", marginLeft: "10px" }}>({currentUser?.email})</span>
+      </motion.h1>
       
-      {/* Top Stats */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "20px", marginBottom: "40px" }}>
         <motion.div whileHover={{ scale: 1.02 }} style={{ background: "#fff", padding: "20px", borderRadius: "10px", boxShadow: "0 4px 10px rgba(0,0,0,0.05)" }}>
           <h3>Total Restaurants</h3>
@@ -67,10 +81,7 @@ const AdminDashboard = () => {
         </motion.div>
       </div>
 
-      {/* Charts Row */}
       <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: "20px", marginBottom: "40px" }}>
-        
-        {/* Area Chart */}
         <div style={{ background: "#fff", padding: "20px", borderRadius: "10px", boxShadow: "0 4px 10px rgba(0,0,0,0.05)" }}>
           <h2>Weekly Platform Revenue</h2>
           <div style={{ height: "300px", marginTop: "20px" }}>
@@ -86,7 +97,6 @@ const AdminDashboard = () => {
           </div>
         </div>
 
-        {/* Donut Chart */}
         <div style={{ background: "#fff", padding: "20px", borderRadius: "10px", boxShadow: "0 4px 10px rgba(0,0,0,0.05)" }}>
           <h2>Restaurant Market Share</h2>
           <div style={{ height: "300px", marginTop: "20px" }}>
@@ -105,10 +115,7 @@ const AdminDashboard = () => {
         </div>
       </div>
 
-      {/* Bottom Row: Add Restaurant & Live Riders */}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "20px" }}>
-        
-        {/* Add Restaurant Form */}
         <div>
           <h2>Onboard New Restaurant</h2>
           <form onSubmit={handleAddRestaurant} style={{ background: "#fff", borderRadius: "10px", padding: "20px", marginTop: "15px", boxShadow: "0 4px 10px rgba(0,0,0,0.05)", display: "flex", flexDirection: "column", gap: "15px" }}>
@@ -119,7 +126,6 @@ const AdminDashboard = () => {
           </form>
         </div>
 
-        {/* Live Riders List */}
         <div>
           <h2>Live Rider Activity</h2>
           <div style={{ background: "#fff", borderRadius: "10px", padding: "20px", marginTop: "15px", boxShadow: "0 4px 10px rgba(0,0,0,0.05)" }}>
@@ -127,7 +133,6 @@ const AdminDashboard = () => {
               <span>Rider Name</span>
               <span>Status</span>
             </div>
-            {/* Mock Riders */}
             <div style={{ display: "flex", justifyContent: "space-between", padding: "10px 0", borderBottom: "1px solid #eee" }}>
               <span>🛵 Ahmed</span>
               <span style={{ color: "green", fontWeight: "bold" }}>Delivering #102</span>
@@ -142,7 +147,6 @@ const AdminDashboard = () => {
             </div>
           </div>
         </div>
-
       </div>
     </div>
   );

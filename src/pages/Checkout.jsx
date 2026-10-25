@@ -5,7 +5,7 @@ import { useNavigate } from "react-router-dom";
 import Toast from "../components/Toast";
 
 const Checkout = () => {
-  const { cart, totalPrice, clearCart } = useCart();
+  const { cart, totalPrice, clearCart, restaurantId } = useCart(); // Get restaurantId from cart
   const { placeOrder } = useApp();
   const navigate = useNavigate();
   
@@ -14,7 +14,6 @@ const Checkout = () => {
   const [showToast, setShowToast] = useState(false);
   const [orderId, setOrderId] = useState(null);
 
-  // Made this function ASYNC
   const handleSubmit = async (e) => {
     e.preventDefault();
     
@@ -27,18 +26,18 @@ const Checkout = () => {
 
     const itemsSummary = cart.map(item => `${item.quantity}x ${item.name}`).join(", ");
 
-    // WAIT for Firebase to save the order and return the ID
+    // Include the restaurantId so it routes to the correct dashboard
     const displayId = await placeOrder({
       customer: form.name,
       total: totalPrice + 50,
       items: itemsSummary,
+      restaurantId: restaurantId, 
     });
 
     setOrderId(displayId);
     setShowToast(true); 
     clearCart();
 
-    // Redirect to the track page using the 4-digit ID
     setTimeout(() => {
       navigate(`/track/${displayId}`);
     }, 1500);
