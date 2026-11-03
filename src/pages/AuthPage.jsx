@@ -1,19 +1,24 @@
 import { useState } from "react";
 import { useAuth } from "../context/AuthContext";
-import { useApp } from "../context/AppContext"; // Import to get the list of restaurants
 import { useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
+import AddressPicker from "../components/AddressPicker";
+import { doc, getDoc } from "firebase/firestore";
+import { db } from "../firebase/config";
 
 const AuthPage = () => {
   const { login, signup } = useAuth();
-  const { restaurants } = useApp(); // Get all restaurants
   const navigate = useNavigate();
   
   const [isLogin, setIsLogin] = useState(true);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [role, setRole] = useState("customer");
-  const [selectedRestaurant, setSelectedRestaurant] = useState("");
+  const [name, setName] = useState("");
+  const [cuisine, setCuisine] = useState("");
+  const [phone, setPhone] = useState("");
+  const [address, setAddress] = useState("");
+  const [location, setLocation] = useState(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -24,19 +29,27 @@ const AuthPage = () => {
       setLoading(true);
       
       if (isLogin) {
-        await login(email, password);
-      } else {
-        // If Restaurant Owner, ensure they selected a restaurant
-        if (role === "restaurant" && !selectedRestaurant) {
-          throw new Error("Please select a restaurant.");
+        const userCredential = await login(email, password);
+        // Fetch the user's actual role from Firestore upon login
+        const userDoc = await getDoc(doc(db, "users", userCredential.user.uid));
+        
+        if (userDoc.exists()) {
+          const actualRole = userDoc.data().role;
+          
+          if (actualRole === "admin") navigate("/admin-dashboard");
+          else if (actualRole === "restaurant") navigate("/restaurant-dashboard");
+          else if (actualRole === "rider") navigate("/rider-dashboard");
+          else navigate("/");
+          return; 
         }
-        await signup(email, password, role, selectedRestaurant);
+      } else {
+        const profileData = { name, phone: cuisine || phone, address, location };
+        await signup(email, password, role, null, profileData);
+        
+        if (role === "restaurant") navigate("/restaurant-dashboard");
+        else if (role === "rider") navigate("/rider-dashboard");
+        else navigate("/");
       }
-      
-      if (role === "admin") navigate("/admin-dashboard");
-      else if (role === "restaurant") navigate("/restaurant-dashboard");
-      else if (role === "rider") navigate("/rider-dashboard");
-      else navigate("/");
       
     } catch (err) {
       setError("Failed: " + err.message);
@@ -45,8 +58,8 @@ const AuthPage = () => {
   };
 
   return (
-    <div style={{ display: "flex", justifyContent: "center", alignItems: "center", minHeight: "100vh", background: "#f7f7f7" }}>
-      <motion.div initial={{ opacity: 0, y: 30 }} animate={{ opacity: 1, y: 0 }} style={{ background: "#fff", padding: "40px", borderRadius: "16px", boxShadow: "0 10px 30px rgba(0,0,0,0.1)", width: "400px" }}>
+    <div style={{ display: "flex", justifyContent: "center", alignItems: "center", minHeight: "100vh", background: "#f7f7f7", padding: "20px" }}>
+      <motion.div initial={{ opacity: 0, y: 30 }} animate={{ opacity: 1, y: 0 }} style={{ background: "#fff", padding: "40px", borderRadius: "16px", boxShadow: "0 10px 30px rgba(0,0,0,0.1)", width: "100%", maxWidth: "500px" }}>
         
         <h2 style={{ textAlign: "center", marginBottom: "20px", color: "#d70f64" }}>
           {isLogin ? "Log In to GB Panda" : "Create an Account"}
@@ -64,22 +77,26 @@ const AuthPage = () => {
                 <option value="customer">I am a Customer</option>
                 <option value="restaurant">I am a Restaurant Owner</option>
                 <option value="rider">I am a Rider</option>
-                <option value="admin">I am an Admin</option>
               </select>
 
-              {/* Show Restaurant Dropdown if they choose "Restaurant Owner" */}
+              {role === "customer" && (
+                <>
+                  <input type="text" placeholder="Full Name" value={name} onChange={(e) => setName(e.target.value)} required style={{ padding: "12px", borderRadius: "8px", border: "1px solid #ddd" }} />
+                  <input type="text" placeholder="Phone Number" value={phone} onChange={(e) => setPhone(e.target.value)} required style={{ padding: "12px", borderRadius: "8px", border: "1px solid #ddd" }} />
+                  <input type="text" placeholder="Delivery Address" value={address} onChange={(e) => setAddress(e.target.value)} required style={{ padding: "12px", borderRadius: "8px", border: "1px solid #ddd" }} />
+                  <div>
+                    <label style={{ fontSize: "14px", color: "#666", marginBottom: "5px", display: "block" }}>Pin your location:</label>
+                    <AddressPicker position={location} setPosition={setLocation} />
+                  </div>
+                </>
+              )}
+
               {role === "restaurant" && (
-                <select 
-                  value={selectedRestaurant} 
-                  onChange={(e) => setSelectedRestaurant(e.target.value)} 
-                  style={{ padding: "12px", borderRadius: "8px", border: "1px solid #ddd" }}
-                  required
-                >
-                  <option value="">Select Your Restaurant...</option>
-                  {restaurants.map(r => (
-                    <option key={r.id} value={r.id}>{r.name}</option>
-                  ))}
-                </select>
+                <>
+                  <input type="text" placeholder="Restaurant Name" value={name} onChange={(e) => setName(e.target.value)} required style={{ padding: "12px", borderRadius: "8px", border: "1px solid #ddd" }} />
+                  <input type="text" placeholder="Cuisine (e.g., Fast Food)" value={cuisine} onChange={(e) => setCuisine(e.target.value)} required style={{ padding: "12px", borderRadius: "8px", border: "1px solid #ddd" }} />
+                  <p style={{ fontSize: "12px", color: "#888" }}>Note: Your restaurant will be shown once approved by Admin.</p>
+                </>
               )}
             </>
           )}

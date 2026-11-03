@@ -11,13 +11,14 @@ import TrackOrder from "./pages/TrackOrder";
 import MyOrders from "./pages/MyOrders";
 import RestaurantDashboard from "./pages/RestaurantDashboard";
 import AdminDashboard from "./pages/AdminDashboard";
+import ManageRestaurants from "./pages/ManageRestaurants"; // <-- Imported
 import RiderDashboard from "./pages/RiderDashboard";
 import AuthPage from "./pages/AuthPage";
 import NotFound from "./pages/NotFound";
 
 // Components
 import Navbar from "./components/Navbar";
-import ProtectedRoute from "./components/ProtectedRoute"; // <-- Imported
+import ProtectedRoute from "./components/ProtectedRoute";
 
 // Contexts
 import { CartProvider } from "./context/CartContext";
@@ -42,9 +43,8 @@ function App() {
           <BrowserRouter>
             <AnimatePresence mode="wait">
               <Routes>
-                {/* Auth Route */}
                 <Route path="/auth" element={<AuthPage />} />
-
+                
                 {/* Customer Routes */}
                 <Route path="/" element={<CustomerLayout><Home /></CustomerLayout>} />
                 <Route path="/restaurants" element={<CustomerLayout><Restaurants /></CustomerLayout>} />
@@ -67,6 +67,12 @@ function App() {
                 <Route path="/admin-dashboard" element={
                   <ProtectedRoute allowedRoles={["admin"]}>
                     <AdminDashboard />
+                  </ProtectedRoute>
+                } />
+
+                <Route path="/manage-restaurants" element={
+                  <ProtectedRoute allowedRoles={["admin"]}>
+                    <ManageRestaurants />
                   </ProtectedRoute>
                 } />
                 

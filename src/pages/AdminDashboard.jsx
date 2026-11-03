@@ -3,6 +3,8 @@ import { useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import { useApp } from "../context/AppContext";
 import { useAuth } from "../context/AuthContext"; 
+import { db } from "../firebase/config";
+import { doc, updateDoc } from "firebase/firestore";
 import { 
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell, Legend
@@ -20,33 +22,20 @@ const COLORS = ['#d70f64', '#0056b3', '#00b894', '#fdcb6e'];
 const AdminDashboard = () => {
   const navigate = useNavigate();
   const { logout, currentUser } = useAuth(); 
-  const { restaurants, addRestaurant, orders } = useApp();
-  
-  const [newRest, setNewRest] = useState({ name: "", cuisine: "", image: "", deliveryTime: "30-40 min", deliveryFee: 50, rating: 4.5, minOrder: 200 });
-
-  const handleAddRestaurant = (e) => {
-    e.preventDefault();
-    if (!newRest.name || !newRest.cuisine) return alert("Please fill required fields");
-    
-    // Generate a unique ID for this restaurant
-    const generatedId = `rest_${Date.now()}`;
-
-    addRestaurant({
-      ...newRest,
-      id: generatedId, // Save the generated ID
-      deliveryFee: Number(newRest.deliveryFee),
-      rating: Number(newRest.rating) || 4.0,
-      minOrder: Number(newRest.minOrder) || 200,
-      image: newRest.image || "https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?w=500"
-    });
-    
-    alert(`Restaurant added! The Restaurant ID is: ${generatedId}`);
-    setNewRest({ name: "", cuisine: "", image: "", deliveryTime: "30-40 min", deliveryFee: 50, rating: 4.5, minOrder: 200 });
-  };
+  const { restaurants, orders } = useApp();
 
   const handleLogout = async () => {
     await logout();
     navigate("/auth");
+  };
+
+  const handleApprove = async (id) => {
+    try {
+      await updateDoc(doc(db, "restaurants", id), { status: "approved" });
+      alert("Restaurant Approved successfully!");
+    } catch (error) {
+      console.error("Error approving restaurant: ", error);
+    }
   };
 
   const pieData = restaurants.slice(0, 4).map((r, index) => ({
@@ -63,10 +52,18 @@ const AdminDashboard = () => {
       </motion.h1>
       
       <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "20px", marginBottom: "40px" }}>
-        <motion.div whileHover={{ scale: 1.02 }} style={{ background: "#fff", padding: "20px", borderRadius: "10px", boxShadow: "0 4px 10px rgba(0,0,0,0.05)" }}>
+        
+        {/* Clickable Total Restaurants Card */}
+        <motion.div 
+          whileHover={{ scale: 1.05, cursor: "pointer" }} 
+          onClick={() => navigate("/manage-restaurants")}
+          style={{ background: "#fff", padding: "20px", borderRadius: "10px", boxShadow: "0 4px 10px rgba(0,0,0,0.05)" }}
+        >
           <h3>Total Restaurants</h3>
-          <p style={{ fontSize: "28px", fontWeight: "bold" }}>{restaurants.length}</p>
+          <p style={{ fontSize: "28px", fontWeight: "bold" }}>{restaurants.filter(r => r.status === "approved" || !r.status).length}</p>
+          <span style={{ fontSize: "12px", color: "#0056b3", fontWeight: "bold" }}>Click to manage →</span>
         </motion.div>
+
         <motion.div whileHover={{ scale: 1.02 }} style={{ background: "#fff", padding: "20px", borderRadius: "10px", boxShadow: "0 4px 10px rgba(0,0,0,0.05)" }}>
           <h3>Total Users</h3>
           <p style={{ fontSize: "28px", fontWeight: "bold" }}>12,450</p>
@@ -117,13 +114,27 @@ const AdminDashboard = () => {
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "20px" }}>
         <div>
-          <h2>Onboard New Restaurant</h2>
-          <form onSubmit={handleAddRestaurant} style={{ background: "#fff", borderRadius: "10px", padding: "20px", marginTop: "15px", boxShadow: "0 4px 10px rgba(0,0,0,0.05)", display: "flex", flexDirection: "column", gap: "15px" }}>
-            <input placeholder="Restaurant Name" value={newRest.name} onChange={(e) => setNewRest({...newRest, name: e.target.value})} style={{ padding: "10px", borderRadius: "5px", border: "1px solid #ccc" }} required />
-            <input placeholder="Cuisine (e.g., Fast Food)" value={newRest.cuisine} onChange={(e) => setNewRest({...newRest, cuisine: e.target.value})} style={{ padding: "10px", borderRadius: "5px", border: "1px solid #ccc" }} required />
-            <input placeholder="Image URL (optional)" value={newRest.image} onChange={(e) => setNewRest({...newRest, image: e.target.value})} style={{ padding: "10px", borderRadius: "5px", border: "1px solid #ccc" }} />
-            <button type="submit" className="btn-primary" style={{ background: "#0056b3" }}>Add Restaurant</button>
-          </form>
+          <h2>Pending Restaurant Approvals</h2>
+          <div style={{ background: "#fff", borderRadius: "10px", padding: "20px", marginTop: "15px", boxShadow: "0 4px 10px rgba(0,0,0,0.05)" }}>
+            {restaurants.filter(r => r.status === "pending").length === 0 ? (
+              <p style={{ color: "#888" }}>No pending requests.</p>
+            ) : (
+              restaurants.filter(r => r.status === "pending").map(req => (
+                <div key={req.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #eee", padding: "15px 0" }}>
+                  <div>
+                    <strong>{req.name}</strong> <br />
+                    <small style={{ color: "#666" }}>Cuisine: {req.cuisine}</small>
+                  </div>
+                  <button 
+                    onClick={() => handleApprove(req.id)} 
+                    style={{ cursor: "pointer", padding: "8px 15px", borderRadius: "5px", border: "none", background: "green", color: "#fff", fontWeight: "bold" }}
+                  >
+                    Approve
+                  </button>
+                </div>
+              ))
+            )}
+          </div>
         </div>
 
         <div>
@@ -136,10 +147,6 @@ const AdminDashboard = () => {
             <div style={{ display: "flex", justifyContent: "space-between", padding: "10px 0", borderBottom: "1px solid #eee" }}>
               <span>🛵 Ahmed</span>
               <span style={{ color: "green", fontWeight: "bold" }}>Delivering #102</span>
-            </div>
-            <div style={{ display: "flex", justifyContent: "space-between", padding: "10px 0", borderBottom: "1px solid #eee" }}>
-              <span>🛵 Bilal</span>
-              <span style={{ color: "#f39c12", fontWeight: "bold" }}>Waiting for Pickup</span>
             </div>
             <div style={{ display: "flex", justifyContent: "space-between", padding: "10px 0" }}>
               <span>🛵 Zain</span>

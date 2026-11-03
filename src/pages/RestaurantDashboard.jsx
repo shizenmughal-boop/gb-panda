@@ -3,17 +3,20 @@ import { useApp } from "../context/AppContext";
 import { useAuth } from "../context/AuthContext";
 import { motion } from "framer-motion";
 import { useNavigate } from "react-router-dom";
-import { Plus, Trash2 } from "lucide-react";
+import { Plus, Trash2, Edit } from "lucide-react";
 
 const RestaurantDashboard = () => {
   const navigate = useNavigate();
   const { logout, currentUser, restaurantId } = useAuth(); 
-  const { orders, updateOrderStatus, addMenuItem, menuItems, uploadImage } = useApp();
+  const { orders, updateOrderStatus, addMenuItem, menuItems, uploadImage, deleteMenuItem, updateMenuItem } = useApp();
   
   const [newItem, setNewItem] = useState({ name: "", price: "", category: "", imageFile: null });
   const [isUploading, setIsUploading] = useState(false);
+  
+  // States for editing an item
+  const [editingItem, setEditingItem] = useState(null);
+  const [editPrice, setEditPrice] = useState("");
 
-  // Filter menu items and orders by the restaurant's ID
   const myMenuItems = menuItems.filter(item => item.restaurantId === restaurantId);
   const myOrders = orders.filter(o => o.restaurantId === restaurantId);
 
@@ -23,9 +26,7 @@ const RestaurantDashboard = () => {
     
     setIsUploading(true);
     
-    let imageUrl = "https://images.unsplash.com/photo-1568901346375-23c9450c58cd?w=400"; // Default fallback
-    
-    // If the user selected a file, upload it to Firebase Storage
+    let imageUrl = "https://images.unsplash.com/photo-1568901346375-23c9450c58cd?w=400"; 
     if (newItem.imageFile) {
       const uploadedUrl = await uploadImage(newItem.imageFile);
       if (uploadedUrl) imageUrl = uploadedUrl;
@@ -136,7 +137,7 @@ const RestaurantDashboard = () => {
           </form>
         </div>
 
-        {/* 3. My Current Menu */}
+        {/* 3. My Current Menu (With Edit & Delete) */}
         <div>
           <h2>My Menu Items</h2>
           <div style={{ background: "#fff", borderRadius: "10px", padding: "20px", marginTop: "15px", boxShadow: "0 4px 10px rgba(0,0,0,0.05)", maxHeight: "500px", overflowY: "auto" }}>
@@ -146,9 +147,22 @@ const RestaurantDashboard = () => {
                 <img src={item.image} alt={item.name} style={{ width: "40px", height: "40px", objectFit: "cover", borderRadius: "5px" }} />
                 <div style={{ flex: 1 }}>
                   <h4 style={{ fontSize: "14px" }}>{item.name}</h4>
-                  <p style={{ fontSize: "12px", color: "#d70f64", fontWeight: "bold" }}>Rs {item.price}</p>
+                  
+                  {/* Inline Edit Mode */}
+                  {editingItem === item.id ? (
+                    <div style={{ display: "flex", gap: "5px", marginTop: "5px" }}>
+                      <input type="number" value={editPrice} onChange={(e) => setEditPrice(e.target.value)} style={{ width: "70px", padding: "2px 5px", fontSize: "12px" }} />
+                      <button onClick={() => { updateMenuItem(item.id, { price: Number(editPrice) }); setEditingItem(null); }} style={{ background: "green", color: "white", border: "none", borderRadius: "3px", padding: "2px 6px", fontSize: "10px", cursor: "pointer" }}>Save</button>
+                      <button onClick={() => setEditingItem(null)} style={{ background: "gray", color: "white", border: "none", borderRadius: "3px", padding: "2px 6px", fontSize: "10px", cursor: "pointer" }}>X</button>
+                    </div>
+                  ) : (
+                    <p style={{ fontSize: "12px", color: "#d70f64", fontWeight: "bold", display: "flex", alignItems: "center", gap: "5px" }}>
+                      Rs {item.price} 
+                      <Edit size={12} style={{ cursor: "pointer", color: "#666" }} onClick={() => { setEditingItem(item.id); setEditPrice(item.price); }} />
+                    </p>
+                  )}
                 </div>
-                <button style={{ background: "none", border: "none", color: "red", cursor: "pointer" }}>
+                <button onClick={() => deleteMenuItem(item.id)} style={{ background: "none", border: "none", color: "red", cursor: "pointer" }}>
                   <Trash2 size={16} />
                 </button>
               </div>

@@ -1,12 +1,12 @@
 import { createContext, useContext, useState, useEffect } from "react";
-import { db } from "../firebase/config"; 
-import { collection, onSnapshot, addDoc, updateDoc, doc, query, orderBy } from "firebase/firestore";
+import { db, storage } from "../firebase/config"; 
+import { collection, onSnapshot, addDoc, updateDoc, doc, query, orderBy, deleteDoc } from "firebase/firestore";
+import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { restaurants as mockRestaurants, menuItems as initialMenu, categories } from "../data/mockData";
 
 const AppContext = createContext();
 
 export const AppProvider = ({ children }) => {
-  // We keep the mock data as the starting point
   const [restaurants, setRestaurants] = useState(mockRestaurants);
   const [menuItems, setMenuItems] = useState(initialMenu);
   const [orders, setOrders] = useState([]);
@@ -28,7 +28,6 @@ export const AppProvider = ({ children }) => {
     const unsubscribe = onSnapshot(collection(db, "restaurants"), (snapshot) => {
       if (!snapshot.empty) {
         const restData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-        // Combine mock data with database data (so we don't lose the initial 4 restaurants)
         setRestaurants([...mockRestaurants, ...restData]);
       }
     });
@@ -64,6 +63,35 @@ export const AppProvider = ({ children }) => {
     }
   };
 
+  const deleteMenuItem = async (id) => {
+    try {
+      await deleteDoc(doc(db, "menuItems", id));
+    } catch (e) {
+      console.error("Error deleting item: ", e);
+    }
+  };
+
+  const updateMenuItem = async (id, updatedData) => {
+    try {
+      await updateDoc(doc(db, "menuItems", id), updatedData);
+    } catch (e) {
+      console.error("Error updating item: ", e);
+    }
+  };
+
+  const uploadImage = async (file) => {
+    if (!file) return null;
+    try {
+      const storageRef = ref(storage, `images/${Date.now()}_${file.name}`);
+      await uploadBytes(storageRef, file);
+      const downloadURL = await getDownloadURL(storageRef);
+      return downloadURL;
+    } catch (e) {
+      console.error("Error uploading image: ", e);
+      return null;
+    }
+  };
+
   const updateOrderStatus = async (id, status) => {
     try {
       const orderRef = doc(db, "orders", id);
@@ -73,9 +101,23 @@ export const AppProvider = ({ children }) => {
     }
   };
 
+  const updateRiderLocation = async (orderId, location) => {
+    try {
+      const orderRef = doc(db, "orders", orderId);
+      await updateDoc(orderRef, { riderLocation: location });
+    } catch (e) {
+      console.error("Error updating rider location: ", e);
+    }
+  };
+
   const placeOrder = async (order) => {
     const displayId = Math.floor(1000 + Math.random() * 9000); 
-    const orderData = { ...order, displayId, status: "Pending", createdAt: new Date() };
+    const orderData = { 
+      ...order, 
+      displayId, 
+      status: "Pending", 
+      createdAt: new Date() 
+    };
     try {
       await addDoc(collection(db, "orders"), orderData);
     } catch (e) {
@@ -87,7 +129,7 @@ export const AppProvider = ({ children }) => {
   return (
     <AppContext.Provider value={{
       restaurants, menuItems, categories, orders, loading,
-      addRestaurant, addMenuItem, updateOrderStatus, placeOrder
+      addRestaurant, addMenuItem, deleteMenuItem, updateMenuItem, updateOrderStatus, updateRiderLocation, placeOrder, uploadImage
     }}>
       {children}
     </AppContext.Provider>
