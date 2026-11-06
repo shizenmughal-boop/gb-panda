@@ -1,98 +1,91 @@
 import { createContext, useContext, useState, useEffect } from "react";
-import { auth, db } from "../firebase/config";
+import { auth, db } from "../firebase";
 import { 
   createUserWithEmailAndPassword, 
   signInWithEmailAndPassword, 
   signOut, 
   onAuthStateChanged 
 } from "firebase/auth";
-import { doc, setDoc, getDoc } from "firebase/firestore";
-
-// --- CHANGE THIS TO YOUR PERSONAL EMAIL ---
-const SUPER_ADMIN_EMAIL = "admin@gbpanda.com"; 
+import { doc, setDoc, onSnapshot } from "firebase/firestore";
 
 const AuthContext = createContext();
 
 export const AuthProvider = ({ children }) => {
   const [currentUser, setCurrentUser] = useState(null);
-  const [role, setRole] = useState(null);
-  const [restaurantId, setRestaurantId] = useState(null);
-  const [profile, setProfile] = useState(null);
+  const [userProfile, setUserProfile] = useState(null);
+  const [restaurantProfile, setRestaurantProfile] = useState(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+    let unsubscribeUser;
+    let unsubscribeRestaurant;
+
+    const unsubscribeAuth = onAuthStateChanged(auth, async (user) => {
+      setCurrentUser(user);
+      
       if (user) {
-        setCurrentUser(user);
-        const userDoc = await getDoc(doc(db, "users", user.uid));
-        if (userDoc.exists()) {
-          const data = userDoc.data();
-          setRole(data.role);
-          setRestaurantId(data.restaurantId || null);
-          setProfile({ name: data.name, phone: data.phone, address: data.address, location: data.location });
+        // SUPER ADMIN OVERRIDE
+        if (user.email.toLowerCase() === "admin@gbpanda.com") {
+          setUserProfile({ uid: user.uid, email: user.email, role: "admin", isSuperAdmin: true });
+          setLoading(false);
+          return;
         }
+
+        unsubscribeUser = onSnapshot(doc(db, "users", user.uid), (docSnap) => {
+          if (docSnap.exists()) {
+            const data = { uid: user.uid, ...docSnap.data() };
+            setUserProfile(data);
+
+            // If Restaurant Owner, fetch their restaurant data
+            if (data.role === "restaurant" && data.restaurantId) {
+              if (unsubscribeRestaurant) unsubscribeRestaurant();
+              
+              unsubscribeRestaurant = onSnapshot(doc(db, "restaurants", data.restaurantId), (restSnap) => {
+                if (restSnap.exists()) {
+                  setRestaurantProfile({ id: restSnap.id, ...restSnap.data() });
+                }
+                setLoading(false); 
+              });
+            } else {
+              setRestaurantProfile(null);
+              setLoading(false); 
+            }
+          } else {
+            setUserProfile({ uid: user.uid, email: user.email, role: "customer" });
+            setLoading(false);
+          }
+        });
       } else {
+        if (unsubscribeUser) unsubscribeUser();
+        if (unsubscribeRestaurant) unsubscribeRestaurant();
+        setUserProfile(null);
+        setRestaurantProfile(null);
         setCurrentUser(null);
-        setRole(null);
-        setRestaurantId(null);
-        setProfile(null);
+        setLoading(false);
       }
-      setLoading(false);
     });
-    return unsubscribe;
+
+    return () => {
+      unsubscribeAuth();
+      if (unsubscribeUser) unsubscribeUser();
+      if (unsubscribeRestaurant) unsubscribeRestaurant();
+    };
   }, []);
 
-  const signup = async (email, password, selectedRole, assignedRestaurantId = null, userProfile = null) => {
-    const userCredential = await createUserWithEmailAndPassword(auth, email, password);
-    
-    // SECURITY LOGIC: If the email is the Super Admin, force role to "admin"
-    let finalRole = selectedRole;
-    if (email.toLowerCase() === SUPER_ADMIN_EMAIL.toLowerCase()) {
-      finalRole = "admin";
-    }
-
-    // If they are a restaurant owner, create a pending restaurant
-    if (finalRole === "restaurant") {
-      const newRestId = `rest_${userCredential.user.uid}`;
-      await setDoc(doc(db, "restaurants", newRestId), {
-        id: newRestId,
-        name: userProfile?.name || "Unnamed Restaurant",
-        cuisine: userProfile?.phone || "Various",
-        status: "pending", 
-        ownerId: userCredential.user.uid,
-        createdAt: new Date()
-      });
-      assignedRestaurantId = newRestId;
-    }
-
-    await setDoc(doc(db, "users", userCredential.user.uid), {
-      email: email,
-      role: finalRole, 
-      restaurantId: assignedRestaurantId,
-      name: userProfile?.name || "",
-      phone: userProfile?.phone || "",
-      address: userProfile?.address || "",
-      location: userProfile?.location || null,
-      createdAt: new Date()
-    });
-    
-    setRole(finalRole);
-    setRestaurantId(assignedRestaurantId);
-    setProfile(userProfile);
-    return userCredential;
+  // Helper for routing
+  const getHomeRouteForRole = (role) => {
+    if (role === "admin") return "/admin/dashboard";
+    if (role === "restaurant") return "/restaurant-dashboard";
+    if (role === "rider") return "/rider-dashboard";
+    return "/";
   };
 
-  const login = (email, password) => {
-    return signInWithEmailAndPassword(auth, email, password);
-  };
-
-  const logout = () => {
-    return signOut(auth);
-  };
+  const login = (email, password) => signInWithEmailAndPassword(auth, email, password);
+  const logout = () => signOut(auth);
 
   return (
-    <AuthContext.Provider value={{ currentUser, role, restaurantId, profile, signup, login, logout, loading }}>
-      {!loading && children}
+    <AuthContext.Provider value={{ currentUser, userProfile, restaurantProfile, login, logout, loading, getHomeRouteForRole }}>
+      {children}
     </AuthContext.Provider>
   );
 };

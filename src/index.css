@@ -10,7 +10,7 @@
 body { 
   background: #f7f7f7; 
   color: #333; 
-  overflow-x: hidden; /* Prevents horizontal scrolling on mobile */
+  overflow-x: hidden; 
 }
 a { 
   text-decoration: none; 
@@ -156,7 +156,6 @@ a {
   margin-bottom: 24px; 
 }
 
-/* Categories */
 .category-grid { 
   display: grid; 
   grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); 
@@ -176,7 +175,6 @@ a {
 }
 .category-card p { font-weight: 600; }
 
-/* Restaurants */
 .restaurant-grid { 
   display: grid; 
   grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); 
@@ -220,7 +218,6 @@ a {
   gap: 3px; 
 }
 
-/* Food Cards */
 .food-grid { 
   display: grid; 
   grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); 
@@ -463,27 +460,22 @@ a {
 }
 
 /* =========================================
-   MOBILE RESPONSIVENESS (Professional Layout)
+   MOBILE RESPONSIVENESS
    ========================================= */
 @media (max-width: 768px) {
-  /* Navbar Mobile Styling */
+  /* Navbar Mobile */
   .navbar { 
     flex-direction: column; 
     padding: 15px; 
     gap: 15px; 
     align-items: stretch;
   }
-  
-  .nav-location { 
-    display: none; /* Hide location on mobile to save space */
-  }
-  
+  .nav-location { display: none; }
   .nav-search { 
     width: 100%; 
     max-width: 100%; 
-    order: 3; /* Move search bar to the bottom */
+    order: 3; 
   }
-  
   .nav-links { 
     margin-left: 0; 
     justify-content: space-between; 
@@ -491,18 +483,14 @@ a {
     gap: 15px;
     font-size: 14px;
   }
-
-  /* Hide text on portal buttons to save space, keep icons */
-  .nav-links button {
-    font-size: 0; 
-  }
+  .nav-links button { font-size: 0; }
   .nav-links button svg {
     width: 22px;
     height: 22px;
     color: #d70f64;
   }
 
-  /* Hero Section */
+  /* Hero */
   .hero { 
     flex-direction: column; 
     padding: 30px 20px; 
@@ -511,15 +499,10 @@ a {
   }
   .hero-content h1 { font-size: 32px; }
   .hero-image { font-size: 60px; }
-  .hero-search { 
-    flex-direction: column; 
-    width: 100%;
-  }
-  .hero-search button {
-    width: 100%;
-  }
+  .hero-search { flex-direction: column; width: 100%; }
+  .hero-search button { width: 100%; }
 
-  /* Grids (Categories & Restaurants) */
+  /* Grids */
   .category-grid { 
     grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); 
     gap: 10px;
@@ -527,25 +510,17 @@ a {
   .category-card { padding: 15px 10px; }
   .category-icon { font-size: 36px; }
   
-  .restaurant-grid { 
-    grid-template-columns: 1fr; /* One column on mobile */
-  }
+  .restaurant-grid { grid-template-columns: 1fr; }
 
   /* Dashboards */
-  .menu-page, .cart-page, .checkout-page, .section { 
-    padding: 20px 15px; 
-  }
+  .menu-page, .cart-page, .checkout-page, .section { padding: 20px 15px; }
 
-  /* Restaurant Menu Header */
   .menu-header { 
     flex-direction: column; 
     text-align: center;
     align-items: center;
   }
-  .menu-header img {
-    width: 100%;
-    height: 200px;
-  }
+  .menu-header img { width: 100%; height: 200px; }
 
   /* Cart Items */
   .cart-item { 
@@ -558,11 +533,13 @@ a {
   .item-total { flex: 1 1 100%; text-align: center; }
   .delete-btn { margin: 0 auto; }
 
-  /* Dashboards (Admin, Restaurant, Rider) force single column */
+  /* Force 1-column layout for all inline-styled grids on mobile */
   div[style*="gridTemplateColumns: \"1fr 1fr\""],
   div[style*="gridTemplateColumns: \"repeat(3, 1fr)\""],
   div[style*="gridTemplateColumns: \"repeat(4, 1fr)\""],
-  div[style*="gridTemplateColumns: \"2fr 1fr\""] {
+  div[style*="gridTemplateColumns: \"2fr 1fr\""],
+  div[style*="gridTemplateColumns: \"1fr 1fr 1fr\""],
+  div[style*="gridTemplateColumns: \"2fr 1fr 1fr\""] {
     grid-template-columns: 1fr !important; 
   }
 }

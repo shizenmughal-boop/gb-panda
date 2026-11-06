@@ -1,8 +1,8 @@
 import { createContext, useContext, useState, useEffect } from "react";
-import { db, storage } from "../firebase/config"; 
-import { collection, onSnapshot, addDoc, updateDoc, doc, query, orderBy, deleteDoc } from "firebase/firestore";
+import { db, storage } from "../firebase"; 
+import { collection, onSnapshot, addDoc, updateDoc, doc, query, orderBy, deleteDoc, arrayUnion, arrayRemove } from "firebase/firestore";
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
-import { restaurants as mockRestaurants, menuItems as initialMenu, categories } from "../data/mockData";
+import { restaurants as mockRestaurants, menuItems as initialMenu, categories as defaultCategories } from "../data/mockData";
 
 const AppContext = createContext();
 
@@ -10,6 +10,8 @@ export const AppProvider = ({ children }) => {
   const [restaurants, setRestaurants] = useState(mockRestaurants);
   const [menuItems, setMenuItems] = useState(initialMenu);
   const [orders, setOrders] = useState([]);
+  const [categories, setCategories] = useState(defaultCategories); 
+  const [reviews, setReviews] = useState([]);
   const [loading, setLoading] = useState(true); 
 
   // 1. Listen to Firebase ORDERS
@@ -45,7 +47,35 @@ export const AppProvider = ({ children }) => {
     return () => unsubscribe();
   }, []);
 
+  // 4. Listen to Firebase CATEGORIES
+  useEffect(() => {
+    const unsubscribe = onSnapshot(collection(db, "categories"), (snapshot) => {
+      if (!snapshot.empty) {
+        const catData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        setCategories([...defaultCategories, ...catData]);
+      }
+    });
+    return () => unsubscribe();
+  }, []);
+
+  // 5. Listen to Firebase REVIEWS
+  useEffect(() => {
+    const unsubscribe = onSnapshot(collection(db, "reviews"), (snapshot) => {
+      const reviewsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setReviews(reviewsData);
+    });
+    return () => unsubscribe();
+  }, []);
+
   // --- ACTIONS ---
+
+  const addCategory = async (newCategory) => {
+    try {
+      await addDoc(collection(db, "categories"), newCategory);
+    } catch (e) {
+      console.error("Error adding category: ", e);
+    }
+  };
 
   const addRestaurant = async (newRestaurant) => {
     try {
@@ -83,19 +113,28 @@ export const AppProvider = ({ children }) => {
     if (!file) return null;
     try {
       const storageRef = ref(storage, `images/${Date.now()}_${file.name}`);
-      await uploadBytes(storageRef, file);
+      const uploadTask = uploadBytes(storageRef, file);
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error("Upload timed out. Please try a smaller image.")), 15000)
+      );
+      await Promise.race([uploadTask, timeoutPromise]);
       const downloadURL = await getDownloadURL(storageRef);
       return downloadURL;
     } catch (e) {
-      console.error("Error uploading image: ", e);
+      console.error("Upload Error: ", e);
+      alert(e.message); 
       return null;
     }
   };
 
-  const updateOrderStatus = async (id, status) => {
+  const updateOrderStatus = async (id, status, riderId = null) => {
     try {
       const orderRef = doc(db, "orders", id);
-      await updateDoc(orderRef, { status });
+      const updateData = { status };
+      if (riderId) {
+        updateData.riderId = riderId;
+      }
+      await updateDoc(orderRef, updateData);
     } catch (e) {
       console.error("Error updating status: ", e);
     }
@@ -112,12 +151,7 @@ export const AppProvider = ({ children }) => {
 
   const placeOrder = async (order) => {
     const displayId = Math.floor(1000 + Math.random() * 9000); 
-    const orderData = { 
-      ...order, 
-      displayId, 
-      status: "Pending", 
-      createdAt: new Date() 
-    };
+    const orderData = { ...order, displayId, status: "Pending", createdAt: new Date() };
     try {
       await addDoc(collection(db, "orders"), orderData);
     } catch (e) {
@@ -126,10 +160,53 @@ export const AppProvider = ({ children }) => {
     return displayId; 
   };
 
+  const toggleFavorite = async (userId, restaurantId, isFavorited) => {
+    try {
+      const userRef = doc(db, "users", userId);
+      await updateDoc(userRef, {
+        favorites: isFavorited ? arrayRemove(restaurantId) : arrayUnion(restaurantId)
+      });
+    } catch (e) {
+      console.error("Error toggling favorite: ", e);
+    }
+  };
+
+  const addReview = async (review) => {
+    try {
+      await addDoc(collection(db, "reviews"), {
+        ...review,
+        createdAt: new Date()
+      });
+    } catch (e) {
+      console.error("Error adding review: ", e);
+    }
+  };
+
+  const toggleRestaurantStatus = async (restaurantId, isOpen) => {
+    try {
+      const restRef = doc(db, "restaurants", restaurantId);
+      await updateDoc(restRef, { isOpen: isOpen });
+    } catch (e) {
+      console.error("Error toggling restaurant status: ", e);
+    }
+  };
+
+  // --- NEW: Rate Rider Function ---
+  const rateRider = async (orderId, rating) => {
+    try {
+      const orderRef = doc(db, "orders", orderId);
+      await updateDoc(orderRef, { riderRating: Number(rating) });
+    } catch (e) {
+      console.error("Error rating rider: ", e);
+    }
+  };
+
   return (
     <AppContext.Provider value={{
-      restaurants, menuItems, categories, orders, loading,
-      addRestaurant, addMenuItem, deleteMenuItem, updateMenuItem, updateOrderStatus, updateRiderLocation, placeOrder, uploadImage
+      restaurants, menuItems, categories, orders, reviews, loading,
+      addCategory, addRestaurant, addMenuItem, deleteMenuItem, updateMenuItem, 
+      updateOrderStatus, updateRiderLocation, placeOrder, uploadImage, 
+      toggleFavorite, addReview, toggleRestaurantStatus, rateRider
     }}>
       {children}
     </AppContext.Provider>

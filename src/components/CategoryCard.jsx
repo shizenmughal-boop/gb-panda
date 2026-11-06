@@ -1,28 +1,24 @@
 import { motion } from "framer-motion";
 
-const CategoryCard = ({ category }) => {
+const CategoryCard = ({ category, isSelected, onClick }) => {
   return (
     <motion.div
-      className="category-card"
+      whileHover={{ y: -5, scale: 1.05 }}
+      whileTap={{ scale: 0.95 }}
+      onClick={onClick}
       style={{
-        background: category.color,
-        transformStyle: "preserve-3d",
-        perspective: "1000px",
-        cursor: "pointer"
+        display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+        padding: "20px", borderRadius: "16px", cursor: "pointer",
+        background: isSelected ? "#ffe5ec" : "#fff",
+        border: isSelected ? "2px solid #d70f64" : "2px solid transparent",
+        boxShadow: "0 4px 15px rgba(0,0,0,0.05)",
+        transition: "background 0.2s, border 0.2s"
       }}
-      whileHover={{
-        scale: 1.05,
-        rotateY: 15,
-        rotateX: 10,
-        z: 50,
-        boxShadow: "0 15px 30px rgba(0,0,0,0.15)"
-      }}
-      transition={{ type: "spring", stiffness: 300, damping: 20 }}
     >
-      <div className="category-icon" style={{ transform: "translateZ(30px)" }}>
-        {category.icon}
-      </div>
-      <p style={{ transform: "translateZ(20px)" }}>{category.name}</p>
+      <div style={{ fontSize: "40px", marginBottom: "10px" }}>{category.icon}</div>
+      <span style={{ fontSize: "14px", fontWeight: "bold", color: isSelected ? "#d70f64" : "#333" }}>
+        {category.name}
+      </span>
     </motion.div>
   );
 };

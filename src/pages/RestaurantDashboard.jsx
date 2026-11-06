@@ -1,178 +1,419 @@
-import { useState } from "react";
-import { useApp } from "../context/AppContext";
+\import { useState, useEffect, useRef } from "react";
 import { useAuth } from "../context/AuthContext";
-import { motion } from "framer-motion";
 import { useNavigate } from "react-router-dom";
-import { Plus, Trash2, Edit } from "lucide-react";
+import { motion, AnimatePresence } from "framer-motion";
+import { db } from "../firebase";
+import { 
+  collection, query, where, onSnapshot, doc, updateDoc, 
+  runTransaction, serverTimestamp, increment, writeBatch 
+} from "firebase/firestore";
+import { 
+  Navigation, LogOut, Wallet, CheckCircle, Clock, MapPin, 
+  Bike, ShieldAlert, AlertTriangle, Phone, MessageSquare 
+} from "lucide-react";
+import { useToast } from "../context/ToastContext";
+import RiderMap from "../components/RiderMap";
+import LiveChatModal from "../components/LiveChatModal";
+import { useWakeLock } from "../hooks/useWakeLock"; // <-- IMPORT ADDED
 
-const RestaurantDashboard = () => {
+const RiderDashboard = () => {
   const navigate = useNavigate();
-  const { logout, currentUser, restaurantId } = useAuth(); 
-  const { orders, updateOrderStatus, addMenuItem, menuItems, uploadImage, deleteMenuItem, updateMenuItem } = useApp();
-  
-  const [newItem, setNewItem] = useState({ name: "", price: "", category: "", imageFile: null });
-  const [isUploading, setIsUploading] = useState(false);
-  
-  // States for editing an item
-  const [editingItem, setEditingItem] = useState(null);
-  const [editPrice, setEditPrice] = useState("");
+  const { logout, currentUser, userProfile } = useAuth();
+  const { showToast } = useToast();
 
-  const myMenuItems = menuItems.filter(item => item.restaurantId === restaurantId);
-  const myOrders = orders.filter(o => o.restaurantId === restaurantId);
+  // Data States
+  const [availableOrders, setAvailableOrders] = useState([]);
+  const [activeOrders, setActiveOrders] = useState([]);
+  const [activeTab, setActiveTab] = useState("Available");
+  
+  // Chat Modal
+  const [chatOrderId, setChatOrderId] = useState(null);
+  const [isChatOpen, setIsChatOpen] = useState(false);
 
-  const handleAddFood = async (e) => {
-    e.preventDefault();
-    if (!newItem.name || !newItem.price) return alert("Please fill name and price");
-    
-    setIsUploading(true);
-    
-    let imageUrl = "https://images.unsplash.com/photo-1568901346375-23c9450c58cd?w=400"; 
-    if (newItem.imageFile) {
-      const uploadedUrl = await uploadImage(newItem.imageFile);
-      if (uploadedUrl) imageUrl = uploadedUrl;
+  // GPS State
+  const [isGpsActive, setIsGpsActive] = useState(false);
+  const watchIdRef = useRef(null);
+  const lastLocationUpdate = useRef(0);
+
+  // Audio State
+  const audioRef = useRef(null);
+  const [prevAvailableCount, setPrevAvailableCount] = useState(0);
+
+  // Derived Status
+  const isOnline = userProfile?.riderStatus === "online";
+  const isApproved = userProfile?.isApproved === true;
+  const isBanned = userProfile?.isBanned === true;
+  const codBalance = userProfile?.codBalance || 0;
+  const codLimit = userProfile?.codLimit || 5000;
+  const isCodLimitReached = codBalance >= codLimit;
+
+  // --- WAKE LOCK HOOK ---
+  // Keeps the screen awake if the rider is online
+  useWakeLock(isOnline);
+
+  // 1. Fetch Available & Active Orders
+  useEffect(() => {
+    if (!currentUser || !isApproved || isBanned) return;
+
+    const qAvailable = query(
+      collection(db, "orders"), 
+      where("status", "==", "Ready"),
+      where("riderId", "==", null)
+    );
+    const unsubAvailable = onSnapshot(qAvailable, (snap) => {
+      setAvailableOrders(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+    });
+
+    const qActive = query(
+      collection(db, "orders"), 
+      where("riderId", "==", currentUser.uid),
+      where("status", "==", "Out for Delivery")
+    );
+    const unsubActive = onSnapshot(qActive, (snap) => {
+      setActiveOrders(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+    });
+
+    return () => { unsubAvailable(); unsubActive(); };
+  }, [currentUser, isApproved, isBanned]);
+
+  // 2. Audio Engine
+  useEffect(() => { audioRef.current = new Audio("/ding.mp3"); }, []);
+
+  useEffect(() => {
+    if (isOnline && availableOrders.length > prevAvailableCount && prevAvailableCount !== 0) {
+      if (audioRef.current) {
+        audioRef.current.play().catch(e => console.log("Audio blocked", e));
+        showToast("🔔 New Delivery Available!", "success");
+      }
     }
+    setPrevAvailableCount(availableOrders.length);
+  }, [availableOrders.length, prevAvailableCount, isOnline, showToast]);
 
-    addMenuItem({
-      name: newItem.name,
-      price: Number(newItem.price),
-      category: newItem.category,
-      restaurantId: restaurantId, 
-      image: imageUrl
+  const unlockAudio = () => {
+    if (audioRef.current && audioRef.current.paused) {
+      audioRef.current.volume = 0;
+      audioRef.current.play().then(() => { audioRef.current.pause(); audioRef.current.volume = 1; }).catch(() => {});
+    }
+  };
+
+  // 3. Online/Offline Toggle
+  const toggleOnlineStatus = async () => {
+    if (isBanned || !isApproved) return;
+    const newStatus = !isOnline;
+    
+    await updateDoc(doc(db, "users", currentUser.uid), {
+      riderStatus: newStatus ? "online" : "offline"
     });
     
-    alert("Food item added to your menu!");
-    setNewItem({ name: "", price: "", category: "", imageFile: null });
-    setIsUploading(false);
+    showToast(`You are now ${newStatus ? "ONLINE 🟢" : "OFFLINE 🔴"}`, newStatus ? "success" : "error");
+    
+    if (!newStatus) stopGpsBroadcast();
   };
 
-  const handleLogout = async () => {
-    await logout();
-    navigate("/auth");
+  // 4. Accept Order
+  const acceptOrder = async (orderId) => {
+    if (!isOnline) return showToast("Go online to accept orders.", "error");
+    if (isCodLimitReached) return showToast("COD limit reached. Settle cash with Admin.", "error");
+
+    try {
+      await runTransaction(db, async (transaction) => {
+        const orderRef = doc(db, "orders", orderId);
+        const orderDoc = await transaction.get(orderRef);
+
+        if (!orderDoc.exists()) throw new Error("Order does not exist.");
+        if (orderDoc.data().riderId) throw new Error("Order already accepted by another rider.");
+        if (orderDoc.data().status !== "Ready") throw new Error("Order is not ready for pickup.");
+
+        transaction.update(orderRef, {
+          riderId: currentUser.uid,
+          riderName: userProfile?.name || "Rider",
+          riderPhone: userProfile?.phone || "",
+          status: "Out for Delivery",
+          pickedUpAt: serverTimestamp()
+        });
+
+        transaction.update(doc(db, "users", currentUser.uid), {
+          riderStatus: "busy"
+        });
+      });
+
+      showToast("Delivery Accepted! Navigate to restaurant.", "success");
+      setActiveTab("Active");
+      startGpsBroadcast();
+    } catch (error) {
+      showToast(error.message, "error");
+    }
   };
+
+  // 5. Live GPS Broadcasting
+  const startGpsBroadcast = () => {
+    if (!currentUser || isGpsActive) return;
+
+    setIsGpsActive(true);
+    watchIdRef.current = navigator.geolocation.watchPosition(
+      (position) => {
+        const now = Date.now();
+        if (now - lastLocationUpdate.current > 10000) {
+          lastLocationUpdate.current = now;
+          const coords = { lat: position.coords.latitude, lng: position.coords.longitude };
+          
+          activeOrders.forEach(order => {
+            updateDoc(doc(db, "orders", order.id), { riderLocation: coords })
+              .catch(err => console.error("GPS Update Error:", err));
+          });
+        }
+      },
+      (err) => console.error("GPS Error:", err),
+      { enableHighAccuracy: true, maximumAge: 5000, timeout: 10000 }
+    );
+  };
+
+  const stopGpsBroadcast = () => {
+    if (watchIdRef.current) {
+      navigator.geolocation.clearWatch(watchIdRef.current);
+      watchIdRef.current = null;
+      setIsGpsActive(false);
+    }
+  };
+
+  useEffect(() => {
+    return () => stopGpsBroadcast();
+  }, []);
+
+  // 6. Mark Delivered
+  const markDelivered = async (order) => {
+    stopGpsBroadcast();
+    const earnings = 150;
+
+    try {
+      const batch = writeBatch(db);
+
+      const orderRef = doc(db, "orders", order.id);
+      batch.update(orderRef, {
+        status: "Delivered",
+        deliveredAt: serverTimestamp(),
+        riderEarnings: earnings
+      });
+
+      const userRef = doc(db, "users", currentUser.uid);
+      batch.update(userRef, {
+        walletBalance: increment(earnings),
+        completedDeliveries: increment(1),
+        codBalance: order.paymentMethod === "COD" ? increment(order.total) : increment(0),
+        riderStatus: activeOrders.length > 1 ? "busy" : "online"
+      });
+
+      await batch.commit();
+      showToast(`Order Delivered! Rs ${earnings} added to wallet.`, "success");
+      
+    } catch (error) {
+      console.error("Delivery Error:", error);
+      showToast("Failed to complete delivery.", "error");
+    }
+  };
+
+  // 7. Gate Screens
+  if (!isApproved && !isBanned) {
+    return (
+      <div style={{ display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center", height: "100vh", background: "#f8f9fa", textAlign: "center", padding: "20px" }}>
+        <Clock size={60} color="#f39c12" style={{ marginBottom: "20px" }} />
+        <h1 style={{ fontSize: "24px", margin: "0 0 10px 0" }}>Verification Pending ⏳</h1>
+        <p style={{ color: "#666", maxWidth: "400px", marginBottom: "30px" }}>
+          Your account is under review by the Admin. We are verifying your Vehicle Type ({userProfile?.vehicleType || "Bike"}) and License ({userProfile?.licenseNumber || "Pending"}).
+        </p>
+        <button onClick={async () => { await logout(); navigate("/auth"); }} style={{ background: "#333", color: "#fff", padding: "12px 25px", borderRadius: "8px", border: "none", fontWeight: "bold", cursor: "pointer" }}>Logout</button>
+      </div>
+    );
+  }
+
+  if (isBanned) {
+    return (
+      <div style={{ display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center", height: "100vh", background: "#fff5f5", textAlign: "center", padding: "20px" }}>
+        <ShieldAlert size={60} color="#d63031" style={{ marginBottom: "20px" }} />
+        <h1 style={{ fontSize: "24px", margin: "0 0 10px 0", color: "#d63031" }}>Account Suspended 🚫</h1>
+        <p style={{ color: "#666", maxWidth: "400px", marginBottom: "30px" }}>Your account has been suspended by the Admin. Please contact support.</p>
+        <button onClick={async () => { await logout(); navigate("/auth"); }} style={{ background: "#d63031", color: "#fff", padding: "12px 25px", borderRadius: "8px", border: "none", fontWeight: "bold", cursor: "pointer" }}>Logout</button>
+      </div>
+    );
+  }
 
   return (
-    <div style={{ padding: "40px", background: "#f4f7f6", minHeight: "100vh" }}>
-      <button onClick={handleLogout} style={{ marginBottom: "20px", cursor: "pointer", border: "none", background: "none", color: "#d70f64", fontWeight: "bold", fontSize: "16px" }}>
-        ← Logout
-      </button>
-      
-      <motion.h1 initial={{ opacity: 0, x: -50 }} animate={{ opacity: 1, x: 0 }} style={{ marginBottom: "30px" }}>
-        Restaurant Dashboard 🍳 <span style={{ fontSize: "16px", color: "#666", marginLeft: "10px" }}>({currentUser?.email})</span>
-      </motion.h1>
-      
-      <div style={{ display: "flex", gap: "20px", marginBottom: "40px" }}>
-        <div style={{ background: "#fff", padding: "20px", borderRadius: "10px", flex: 1, boxShadow: "0 4px 10px rgba(0,0,0,0.05)" }}>
-          <h3>Today's Sales</h3>
-          <p style={{ fontSize: "24px", fontWeight: "bold", color: "green" }}>Rs 24,500</p>
-        </div>
-        <div style={{ background: "#fff", padding: "20px", borderRadius: "10px", flex: 1, boxShadow: "0 4px 10px rgba(0,0,0,0.05)" }}>
-          <h3>Active Orders</h3>
-          <p style={{ fontSize: "24px", fontWeight: "bold", color: "#d70f64" }}>
-            {myOrders.filter(o => o.status !== "Delivered").length}
-          </p>
-        </div>
-        <div style={{ background: "#fff", padding: "20px", borderRadius: "10px", flex: 1, boxShadow: "0 4px 10px rgba(0,0,0,0.05)" }}>
-          <h3>Menu Items</h3>
-          <p style={{ fontSize: "24px", fontWeight: "bold", color: "#0056b3" }}>{myMenuItems.length}</p>
+    <div style={{ padding: "20px", background: "#f4f7f6", minHeight: "100vh", paddingBottom: "100px" }} onClick={unlockAudio}>
+      <audio ref={audioRef} src="/ding.mp3" />
+
+      {/* Header & Online Toggle */}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "20px" }}>
+        <button onClick={async () => { await logout(); navigate("/auth"); }} style={{ display: "flex", alignItems: "center", gap: "5px", cursor: "pointer", border: "none", background: "none", color: "#d70f64", fontWeight: "bold" }}>
+          <LogOut size={18} /> Logout
+        </button>
+
+        <div 
+          onClick={toggleOnlineStatus}
+          style={{ 
+            display: "flex", alignItems: "center", gap: "10px", 
+            background: isOnline ? "#e6fced" : "#ffe5e5", 
+            padding: "10px 20px", borderRadius: "20px", cursor: "pointer",
+            boxShadow: "0 4px 10px rgba(0,0,0,0.1)",
+            border: isOnline ? "2px solid #00b894" : "2px solid #d63031"
+          }}
+        >
+          <span style={{ fontSize: "14px", fontWeight: "bold", color: isOnline ? "green" : "#d63031" }}>
+            {isOnline ? "ONLINE 🟢" : "OFFLINE 🔴"}
+          </span>
+          <label style={{ display: "inline-block", width: "50px", height: "26px", position: "relative", cursor: "pointer" }}>
+            <input type="checkbox" checked={isOnline} readOnly style={{ opacity: 0, width: 0, height: 0 }} />
+            <span style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, background: isOnline ? "green" : "#ccc", borderRadius: "26px", transition: "0.4s" }}>
+              <span style={{ position: "absolute", height: "18px", width: "18px", left: isOnline ? "26px" : "4px", bottom: "4px", background: "white", borderRadius: "50%", transition: "0.4s" }}></span>
+            </span>
+          </label>
         </div>
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "30px" }}>
-        
-        {/* 1. Live Orders */}
-        <div>
-          <h2>Live Orders</h2>
-          <div style={{ background: "#fff", borderRadius: "10px", padding: "20px", marginTop: "15px", boxShadow: "0 4px 10px rgba(0,0,0,0.05)", maxHeight: "500px", overflowY: "auto" }}>
-            {myOrders.length === 0 && <p style={{color: "#888"}}>No orders for your restaurant yet.</p>}
-            {myOrders.map(o => (
-              <div key={o.id} style={{ display: "flex", flexDirection: "column", borderBottom: "1px solid #eee", padding: "15px 0", gap: "10px" }}>
-                <div style={{ display: "flex", justifyContent: "space-between" }}>
-                  <strong>#{o.displayId || o.id}</strong>
-                  <span style={{ 
-                    padding: "2px 8px", borderRadius: "12px", fontSize: "12px", 
-                    background: o.status === "Pending" ? "#ffeaa7" : o.status === "Preparing" ? "#74b9ff" : o.status === "Ready" ? "#a29bfe" : "#55efc4" 
-                  }}>
-                    {o.status}
-                  </span>
-                </div>
-                <small style={{ color: "#666" }}>{o.items}</small>
-                <div style={{ display: "flex", gap: "10px" }}>
-                  {o.status === "Pending" && (
-                    <button onClick={() => updateOrderStatus(o.id, "Preparing")} style={{ flex: 1, cursor: "pointer", padding: "5px", borderRadius: "5px", border: "none", background: "#333", color: "#fff" }}>
-                      Accept
-                    </button>
-                  )}
-                  {o.status === "Preparing" && (
-                    <button onClick={() => updateOrderStatus(o.id, "Ready")} style={{ flex: 1, cursor: "pointer", padding: "5px", borderRadius: "5px", border: "none", background: "#6c5ce7", color: "#fff" }}>
-                      Mark Ready
-                    </button>
-                  )}
-                </div>
-              </div>
-            ))}
-          </div>
+      {/* COD Limit Warning */}
+      {isCodLimitReached && (
+        <div style={{ background: "#ffe5e5", color: "#d63031", padding: "15px", borderRadius: "10px", marginBottom: "20px", display: "flex", alignItems: "center", gap: "10px", fontWeight: "bold" }}>
+          <AlertTriangle size={20} /> COD Limit Reached (Rs {codBalance}). Settle cash with Admin.
         </div>
+      )}
 
-        {/* 2. Add New Food Form */}
-        <div>
-          <h2>Add New Food</h2>
-          <form onSubmit={handleAddFood} style={{ background: "#fff", borderRadius: "10px", padding: "20px", marginTop: "15px", boxShadow: "0 4px 10px rgba(0,0,0,0.05)", display: "flex", flexDirection: "column", gap: "15px" }}>
-            <input placeholder="Food Name" value={newItem.name} onChange={(e) => setNewItem({...newItem, name: e.target.value})} style={{ padding: "10px", borderRadius: "5px", border: "1px solid #ccc" }} required />
-            <input placeholder="Price (Rs)" type="number" value={newItem.price} onChange={(e) => setNewItem({...newItem, price: e.target.value})} style={{ padding: "10px", borderRadius: "5px", border: "1px solid #ccc" }} required />
-            <input placeholder="Category" value={newItem.category} onChange={(e) => setNewItem({...newItem, category: e.target.value})} style={{ padding: "10px", borderRadius: "5px", border: "1px solid #ccc" }} />
+      {/* KPI Cards */}
+      <div style={{ display: "flex", gap: "15px", overflowX: "auto", paddingBottom: "10px", marginBottom: "20px", scrollbarWidth: "none" }}>
+        <div style={{ minWidth: "150px", background: "#fff", padding: "15px", borderRadius: "12px", boxShadow: "0 4px 10px rgba(0,0,0,0.05)", borderLeft: "4px solid #00b894" }}>
+          <p style={{ margin: "0 0 5px 0", fontSize: "12px", color: "#666" }}>Wallet Balance</p>
+          <h2 style={{ margin: 0, fontSize: "22px", color: "green" }}>Rs {userProfile?.walletBalance || 0}</h2>
+        </div>
+        <div style={{ minWidth: "150px", background: "#fff", padding: "15px", borderRadius: "12px", boxShadow: "0 4px 10px rgba(0,0,0,0.05)", borderLeft: "4px solid #d70f64" }}>
+          <p style={{ margin: "0 0 5px 0", fontSize: "12px", color: "#666" }}>COD Cash</p>
+          <h2 style={{ margin: 0, fontSize: "22px", color: "#d70f64" }}>Rs {codBalance}</h2>
+        </div>
+        <div style={{ minWidth: "150px", background: "#fff", padding: "15px", borderRadius: "12px", boxShadow: "0 4px 10px rgba(0,0,0,0.05)", borderLeft: "4px solid #0056b3" }}>
+          <p style={{ margin: "0 0 5px 0", fontSize: "12px", color: "#666" }}>Deliveries</p>
+          <h2 style={{ margin: 0, fontSize: "22px", color: "#0056b3" }}>{userProfile?.completedDeliveries || 0}</h2>
+        </div>
+      </div>
+
+      {/* Tabs */}
+      <div style={{ display: "flex", gap: "10px", marginBottom: "20px" }}>
+        <button onClick={() => setActiveTab("Available")} style={{ flex: 1, padding: "15px", borderRadius: "10px", border: "none", fontWeight: "bold", cursor: "pointer", background: activeTab === "Available" ? "#1a1a2e" : "#fff", color: activeTab === "Available" ? "#fff" : "#666" }}>
+          Available ({availableOrders.length})
+        </button>
+        <button onClick={() => setActiveTab("Active")} style={{ flex: 1, padding: "15px", borderRadius: "10px", border: "none", fontWeight: "bold", cursor: "pointer", background: activeTab === "Active" ? "#1a1a2e" : "#fff", color: activeTab === "Active" ? "#fff" : "#666" }}>
+          My Deliveries ({activeOrders.length})
+        </button>
+      </div>
+
+      {/* TAB CONTENT */}
+      <div style={{ display: "flex", flexDirection: "column", gap: "15px" }}>
+        
+        {activeTab === "Available" && availableOrders.length === 0 && (
+          <div style={{ textAlign: "center", padding: "50px 20px", color: "#888" }}>
+            <Bike size={50} style={{ marginBottom: "15px", opacity: 0.5 }} />
+            <h3>No orders available right now.</h3>
+            <p>Stay online, we'll alert you when a new delivery drops!</p>
+          </div>
+        )}
+        
+        {activeTab === "Available" && availableOrders.map(order => (
+          <motion.div key={order.id} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} style={{ background: "#fff", borderRadius: "12px", padding: "20px", boxShadow: "0 4px 15px rgba(0,0,0,0.08)", borderTop: "5px solid #0056b3" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "15px" }}>
+              <strong style={{ fontSize: "18px" }}>#{order.displayId || order.id.slice(-4).toUpperCase()}</strong>
+              <span style={{ background: "#e6f0fa", color: "#0056b3", padding: "4px 10px", borderRadius: "12px", fontSize: "12px", fontWeight: "bold" }}>Ready</span>
+            </div>
             
-            <div>
-              <label style={{ fontSize: "12px", color: "#666", display: "block", marginBottom: "5px" }}>Upload Food Image:</label>
-              <input 
-                type="file" 
-                accept="image/*"
-                onChange={(e) => setNewItem({...newItem, imageFile: e.target.files[0]})} 
-                style={{ padding: "10px", borderRadius: "5px", border: "1px solid #ccc", width: "100%" }} 
+            <div style={{ marginBottom: "15px", fontSize: "14px" }}>
+              <p style={{ margin: "0 0 8px 0", display: "flex", alignItems: "center", gap: "5px" }}><MapPin size={16} color="#d70f64" /> <strong>Pickup:</strong> {order.restaurantName}</p>
+              <p style={{ margin: "0 0 8px 0", display: "flex", alignItems: "center", gap: "5px" }}><MapPin size={16} color="#00b894" /> <strong>Dropoff:</strong> {order.deliveryAddress}</p>
+              <p style={{ margin: 0, color: order.paymentMethod === "COD" ? "green" : "#0056b3", fontWeight: "bold" }}>
+                {order.paymentMethod === "COD" ? `💵 Collect Rs ${order.total} (COD)` : "✅ Paid Online"}
+              </p>
+            </div>
+
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", background: "#f9f9f9", padding: "10px", borderRadius: "8px", marginBottom: "15px" }}>
+              <span style={{ fontWeight: "bold", color: "#666" }}>Estimated Earnings</span>
+              <span style={{ fontWeight: "bold", color: "#00b894", fontSize: "18px" }}>Rs {order.riderEarnings || 150}</span>
+            </div>
+
+            <button 
+              onClick={() => acceptOrder(order.id)} 
+              disabled={!isOnline || isCodLimitReached} 
+              style={{ width: "100%", background: (isOnline && !isCodLimitReached) ? "#0056b3" : "#ccc", color: "#fff", border: "none", padding: "15px", borderRadius: "10px", fontWeight: "bold", fontSize: "16px", cursor: (isOnline && !isCodLimitReached) ? "pointer" : "not-allowed" }}
+            >
+              {(isOnline && !isCodLimitReached) ? "Accept Delivery" : (!isOnline ? "Go Online to Accept" : "COD Limit Reached")}
+            </button>
+          </motion.div>
+        ))}
+
+        {activeTab === "Active" && activeOrders.length === 0 && (
+          <div style={{ textAlign: "center", padding: "50px 20px", color: "#888" }}>
+            <CheckCircle size={50} style={{ marginBottom: "15px", opacity: 0.5 }} />
+            <h3>No active deliveries.</h3>
+            <p>Accept an order to start delivering!</p>
+          </div>
+        )}
+
+        {activeTab === "Active" && activeOrders.map(order => (
+          <motion.div key={order.id} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} style={{ background: "#fff", borderRadius: "12px", padding: "20px", boxShadow: "0 4px 15px rgba(0,0,0,0.08)", borderTop: "5px solid #d70f64" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "15px" }}>
+              <strong style={{ fontSize: "18px" }}>#{order.displayId || order.id.slice(-4).toUpperCase()}</strong>
+              <span style={{ background: "#ffe5e5", color: "#d63031", padding: "4px 10px", borderRadius: "12px", fontSize: "12px", fontWeight: "bold", animation: "pulse 2s infinite" }}>On the Way</span>
+            </div>
+            
+            <div style={{ marginBottom: "15px" }}>
+              <RiderMap 
+                mode="route"
+                riderLocation={order.riderLocation}
+                restaurantLocation={order.restaurantLocation}
+                customerLocation={order.customerLocation}
               />
             </div>
 
-            <button type="submit" disabled={isUploading} className="btn-primary" style={{ marginTop: "10px", display: "flex", alignItems: "center", justifyContent: "center", gap: "5px" }}>
-              {isUploading ? "Uploading..." : <><Plus size={18} /> Add to Menu</>}
-            </button>
-          </form>
-        </div>
+            <div style={{ marginBottom: "15px", fontSize: "14px" }}>
+              <p style={{ margin: "0 0 5px 0", fontWeight: "bold" }}>Customer: {order.customerName}</p>
+              <p style={{ margin: "0 0 10px 0", color: "#666" }}>📍 {order.deliveryAddress}</p>
+            </div>
 
-        {/* 3. My Current Menu (With Edit & Delete) */}
-        <div>
-          <h2>My Menu Items</h2>
-          <div style={{ background: "#fff", borderRadius: "10px", padding: "20px", marginTop: "15px", boxShadow: "0 4px 10px rgba(0,0,0,0.05)", maxHeight: "500px", overflowY: "auto" }}>
-            {myMenuItems.length === 0 && <p style={{color: "#888"}}>No items on your menu yet.</p>}
-            {myMenuItems.map(item => (
-              <div key={item.id} style={{ display: "flex", alignItems: "center", gap: "15px", borderBottom: "1px solid #eee", padding: "10px 0" }}>
-                <img src={item.image} alt={item.name} style={{ width: "40px", height: "40px", objectFit: "cover", borderRadius: "5px" }} />
-                <div style={{ flex: 1 }}>
-                  <h4 style={{ fontSize: "14px" }}>{item.name}</h4>
-                  
-                  {/* Inline Edit Mode */}
-                  {editingItem === item.id ? (
-                    <div style={{ display: "flex", gap: "5px", marginTop: "5px" }}>
-                      <input type="number" value={editPrice} onChange={(e) => setEditPrice(e.target.value)} style={{ width: "70px", padding: "2px 5px", fontSize: "12px" }} />
-                      <button onClick={() => { updateMenuItem(item.id, { price: Number(editPrice) }); setEditingItem(null); }} style={{ background: "green", color: "white", border: "none", borderRadius: "3px", padding: "2px 6px", fontSize: "10px", cursor: "pointer" }}>Save</button>
-                      <button onClick={() => setEditingItem(null)} style={{ background: "gray", color: "white", border: "none", borderRadius: "3px", padding: "2px 6px", fontSize: "10px", cursor: "pointer" }}>X</button>
-                    </div>
-                  ) : (
-                    <p style={{ fontSize: "12px", color: "#d70f64", fontWeight: "bold", display: "flex", alignItems: "center", gap: "5px" }}>
-                      Rs {item.price} 
-                      <Edit size={12} style={{ cursor: "pointer", color: "#666" }} onClick={() => { setEditingItem(item.id); setEditPrice(item.price); }} />
-                    </p>
-                  )}
-                </div>
-                <button onClick={() => deleteMenuItem(item.id)} style={{ background: "none", border: "none", color: "red", cursor: "pointer" }}>
-                  <Trash2 size={16} />
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px", marginBottom: "15px" }}>
+              <a href={`tel:${order.customerPhone}`} style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: "5px", background: "#e6f0fa", color: "#0056b3", padding: "12px", borderRadius: "8px", textDecoration: "none", fontWeight: "bold" }}>
+                <Phone size={18} /> Call
+              </a>
+              <button onClick={() => { setChatOrderId(order.id); setIsChatOpen(true); }} style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: "5px", background: "#f0f0f0", color: "#333", padding: "12px", borderRadius: "8px", border: "none", fontWeight: "bold", cursor: "pointer" }}>
+                <MessageSquare size={18} /> Chat
+              </button>
+            </div>
+
+            <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+              {order.customerLocation && (
+                <a 
+                  href={`https://www.google.com/maps/dir/?api=1&destination=${order.customerLocation.lat},${order.customerLocation.lng}`} 
+                  target="_blank" rel="noreferrer"
+                  style={{ width: "100%", background: "#4285F4", color: "#fff", border: "none", padding: "15px", borderRadius: "10px", fontWeight: "bold", textDecoration: "none", display: "flex", justifyContent: "center", alignItems: "center", gap: "8px" }}
+                >
+                  <Navigation size={18} /> Open Google Maps
+                </a>
+              )}
+
+              {!isGpsActive ? (
+                <button onClick={startGpsBroadcast} style={{ width: "100%", background: "#f39c12", color: "#fff", border: "none", padding: "15px", borderRadius: "10px", fontWeight: "bold", cursor: "pointer", display: "flex", justifyContent: "center", alignItems: "center", gap: "8px" }}>
+                  📡 Start Live GPS Tracking
                 </button>
-              </div>
-            ))}
-          </div>
-        </div>
+              ) : (
+                <div style={{ textAlign: "center", color: "#00b894", fontWeight: "bold", fontSize: "14px" }}>
+                  ✅ GPS Broadcasting Active
+                </div>
+              )}
+
+              <button onClick={() => markDelivered(order)} style={{ width: "100%", background: "#00b894", color: "#fff", border: "none", padding: "15px", borderRadius: "10px", fontWeight: "bold", fontSize: "16px", cursor: "pointer", display: "flex", justifyContent: "center", alignItems: "center", gap: "8px", marginTop: "10px" }}>
+                <CheckCircle size={20} /> Mark as Delivered {order.paymentMethod === "COD" && `(Collect Rs ${order.total})`}
+              </button>
+            </div>
+          </motion.div>
+        ))}
 
       </div>
+
+      <LiveChatModal isOpen={isChatOpen} onClose={() => setIsChatOpen(false)} orderId={chatOrderId} />
     </div>
   );
 };
 
-export default RestaurantDashboard;
+export default RiderDashboard;

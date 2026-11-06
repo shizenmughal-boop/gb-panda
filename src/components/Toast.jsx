@@ -1,7 +1,21 @@
 import { motion, AnimatePresence } from "framer-motion";
-import { CheckCircle, X } from "lucide-react";
+import { CheckCircle, Info, X, Bell } from "lucide-react";
 
-const Toast = ({ message, isVisible, onClose }) => {
+const Toast = ({ message, isVisible, onClose, type = "success" }) => {
+  // Choose icon and color based on type
+  const getStyle = () => {
+    switch (type) {
+      case "info":
+        return { icon: <Info color="#0056b3" size={24} />, border: "6px solid #0056b3" };
+      case "warning":
+        return { icon: <Bell color="#f39c12" size={24} />, border: "6px solid #f39c12" };
+      default:
+        return { icon: <CheckCircle color="#00b894" size={24} />, border: "6px solid #00b894" };
+    }
+  };
+
+  const style = getStyle();
+
   return (
     <AnimatePresence>
       {isVisible && (
@@ -21,11 +35,11 @@ const Toast = ({ message, isVisible, onClose }) => {
             alignItems: "center",
             gap: "12px",
             zIndex: 9999,
-            borderLeft: "6px solid #00b894",
+            borderLeft: style.border,
             minWidth: "300px"
           }}
         >
-          <CheckCircle color="#00b894" size={24} />
+          {style.icon}
           <p style={{ fontWeight: "600", flex: 1 }}>{message}</p>
           <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", color: "#999" }}>
             <X size={18} />
