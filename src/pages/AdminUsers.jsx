@@ -2,7 +2,8 @@ import { useState, useEffect } from "react";
 import { db } from "../firebase";
 import { collection, onSnapshot, doc, updateDoc, addDoc, serverTimestamp } from "firebase/firestore";
 import { motion, AnimatePresence } from "framer-motion";
-import { Search, User, ShieldAlert, Wallet, X, Ban } from "lucide-react";
+import { Search, User, Wallet, X, Ban, CheckCircle } from "lucide-react";
+import { useToast } from "../context/ToastContext";
 
 const AdminUsers = () => {
   const [users, setUsers] = useState([]);
@@ -12,8 +13,10 @@ const AdminUsers = () => {
   const [selectedUser, setSelectedUser] = useState(null);
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [walletAdjustment, setWalletAdjustment] = useState("");
+  
+  const { showToast } = useToast();
 
-  // Fetch Users
+  // Real-time listener for users
   useEffect(() => {
     const unsub = onSnapshot(collection(db, "users"), (snap) => {
       setUsers(snap.docs.map(d => ({ id: d.id, ...d.data() })));
@@ -21,7 +24,6 @@ const AdminUsers = () => {
     return () => unsub();
   }, []);
 
-  // Filter Logic
   const filteredUsers = users.filter(u => {
     const matchSearch = 
       (u.name?.toLowerCase() || "").includes(searchQuery.toLowerCase()) || 
@@ -35,28 +37,42 @@ const AdminUsers = () => {
     return matchSearch;
   });
 
+  // --- ACTIONS ---
   const handleBanToggle = async (id, currentStatus) => {
-    await updateDoc(doc(db, "users", id), { isBanned: !currentStatus });
+    const confirmMsg = currentStatus ? "Are you sure you want to UNBAN this user?" : "Are you sure you want to BAN this user?";
+    if (window.confirm(confirmMsg)) {
+      await updateDoc(doc(db, "users", id), { isBanned: !currentStatus });
+      showToast(`User ${!currentStatus ? "Banned" : "Unbanned"} successfully`, "success");
+    }
   };
 
   const handleWalletAdjust = async () => {
-    if (!walletAdjustment || isNaN(walletAdjustment)) return alert("Enter a valid amount");
-    const newBalance = (selectedUser.walletBalance || 0) + Number(walletAdjustment);
+    if (!walletAdjustment || isNaN(walletAdjustment)) return showToast("Enter a valid amount", "error");
     
-    await updateDoc(doc(db, "users", selectedUser.id), { walletBalance: newBalance });
+    const amount = Number(walletAdjustment);
+    const newBalance = (selectedUser.walletBalance || 0) + amount;
     
-    // Log transaction
-    await addDoc(collection(db, "walletTransactions"), {
-      userId: selectedUser.id,
-      amount: Number(walletAdjustment),
-      type: Number(walletAdjustment) > 0 ? "credit" : "debit",
-      reason: "Admin Adjustment",
-      createdAt: serverTimestamp()
-    });
+    if (newBalance < 0) return showToast("Wallet balance cannot go below 0", "error");
 
-    setWalletAdjustment("");
-    setSelectedUser({ ...selectedUser, walletBalance: newBalance });
-    alert("Wallet updated successfully.");
+    try {
+      // 1. Update Wallet Balance
+      await updateDoc(doc(db, "users", selectedUser.id), { walletBalance: newBalance });
+      
+      // 2. Log Transaction
+      await addDoc(collection(db, "walletTransactions"), {
+        userId: selectedUser.id,
+        amount: amount,
+        type: amount > 0 ? "credit" : "debit",
+        reason: "Admin Manual Adjustment",
+        createdAt: serverTimestamp()
+      });
+
+      setWalletAdjustment("");
+      setSelectedUser({ ...selectedUser, walletBalance: newBalance });
+      showToast("Wallet updated successfully.", "success");
+    } catch (error) {
+      showToast("Failed to update wallet.", "error");
+    }
   };
 
   const openDrawer = (user) => {
@@ -77,7 +93,6 @@ const AdminUsers = () => {
         </div>
       </div>
 
-      {/* Tabs */}
       <div style={{ display: "flex", gap: "10px", marginBottom: "20px", borderBottom: "1px solid #ddd", paddingBottom: "10px" }}>
         {["All Users", "Customers", "Riders", "Restaurants"].map(tab => (
           <button
@@ -92,7 +107,6 @@ const AdminUsers = () => {
         ))}
       </div>
 
-      {/* Table */}
       <div style={{ background: "#fff", borderRadius: "12px", padding: "20px", boxShadow: "0 4px 15px rgba(0,0,0,0.05)", overflowX: "auto" }}>
         <table style={{ width: "100%", borderCollapse: "collapse" }}>
           <thead>
@@ -161,12 +175,12 @@ const AdminUsers = () => {
                 <div style={{ background: "#f9f9f9", padding: "15px", borderRadius: "10px", marginBottom: "20px" }}>
                   <h3 style={{ fontSize: "14px", marginBottom: "10px", color: "#666" }}>Account Details</h3>
                   <p style={{ margin: "5px 0", fontSize: "14px" }}><strong>Role:</strong> {selectedUser.role}</p>
-                  <p style={{ margin: "5px 0", fontSize: "14px" }}><strong>Joined:</strong> {selectedUser.createdAt?.toDate ? selectedUser.createdAt.toDate().toLocaleDateString() : "N/A"}</p>
+                  <p style={{ margin: "5px 0", fontSize: "14px" }}><strong>Phone:</strong> {selectedUser.phone || "N/A"}</p>
                   <p style={{ margin: "5px 0", fontSize: "14px" }}><strong>Status:</strong> {selectedUser.isBanned ? "Banned" : "Active"}</p>
                 </div>
 
                 <div style={{ background: "#e6f0fa", padding: "15px", borderRadius: "10px", marginBottom: "20px" }}>
-                  <h3 style={{ fontSize: "14px", marginBottom: "10px", color: "#0056b3", display: "flex", alignItems: "center", gap: "5px" }}><Wallet size={16} /> Wallet Balance</h3>
+                  <h3 style={{ fontSize: "14px", marginBottom: "10px", color: "#0056b3", display: "flex", alignItems: "center", gap: "5px" }}><Wallet size={16} /> PandaPay Wallet</h3>
                   <p style={{ fontSize: "24px", fontWeight: "bold", margin: "0 0 15px 0", color: "#0056b3" }}>Rs {(selectedUser.walletBalance || 0).toLocaleString()}</p>
                   
                   <div style={{ display: "flex", gap: "10px" }}>

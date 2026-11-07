@@ -9,30 +9,37 @@ import { User, MapPin, Phone, Save, Wallet, ShoppingBag } from "lucide-react";
 import AddressPicker from "../components/AddressPicker";
 
 const CustomerProfile = () => {
-  const { currentUser, userData } = useAuth();
-  const { orders } = useApp(); // Assuming orders are available globally or fetch them
+  const { currentUser, userProfile } = useAuth();
+  const { orders } = useApp(); 
   const { showToast } = useToast();
 
-  const [name, setName] = useState(userData?.name || "");
-  const [phone, setPhone] = useState(userData?.phone || "");
-  const [address, setAddress] = useState(userData?.address || "");
-  const [location, setLocation] = useState(userData?.location || null);
+  // Pre-fill form with live database data
+  const [name, setName] = useState(userProfile?.name || "");
+  const [phone, setPhone] = useState(userProfile?.phone || "");
+  const [address, setAddress] = useState(userProfile?.address || "");
+  const [location, setLocation] = useState(userProfile?.location || null);
   const [saving, setSaving] = useState(false);
 
-  // Lifetime Stats
+  // Calculate Lifetime Stats
   const myOrders = orders.filter(o => o.customerId === currentUser?.uid && o.status === "Delivered");
   const totalOrders = myOrders.length;
   const totalSpent = myOrders.reduce((sum, o) => sum + (o.total || 0), 0);
 
   const handleSave = async (e) => {
     e.preventDefault();
+    if (!currentUser) return;
+    
     setSaving(true);
     try {
       await updateDoc(doc(db, "users", currentUser.uid), {
-        name, phone, address, location
+        name: name,
+        phone: phone,
+        address: address,
+        location: location
       });
       showToast("Profile updated successfully!", "success");
     } catch (error) {
+      console.error("Profile Update Error:", error);
       showToast("Failed to update profile.", "error");
     }
     setSaving(false);
@@ -45,11 +52,11 @@ const CustomerProfile = () => {
         {/* Header */}
         <div style={{ display: "flex", alignItems: "center", gap: "20px", borderBottom: "1px solid #eee", paddingBottom: "20px", marginBottom: "25px" }}>
           <div style={{ background: "#d70f64", color: "#fff", width: "70px", height: "70px", borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "28px", fontWeight: "bold" }}>
-            {userData?.name?.charAt(0).toUpperCase() || "U"}
+            {userProfile?.name?.charAt(0).toUpperCase() || "U"}
           </div>
           <div>
-            <h1 style={{ margin: "0 0 5px 0", fontSize: "24px" }}>{userData?.name}</h1>
-            <p style={{ margin: 0, color: "#666" }}>{userData?.email}</p>
+            <h1 style={{ margin: "0 0 5px 0", fontSize: "24px" }}>{userProfile?.name || "Customer"}</h1>
+            <p style={{ margin: 0, color: "#666" }}>{currentUser?.email}</p>
           </div>
         </div>
 
@@ -68,11 +75,11 @@ const CustomerProfile = () => {
           <div style={{ background: "#f9f9f9", padding: "15px", borderRadius: "10px", textAlign: "center" }}>
             <Wallet size={20} color="#d70f64" style={{ marginBottom: "5px" }} />
             <p style={{ margin: 0, fontSize: "12px", color: "#666" }}>PandaPay Wallet</p>
-            <h3 style={{ margin: "5px 0 0 0", color: "#d70f64" }}>Rs {userData?.walletBalance || 0}</h3>
+            <h3 style={{ margin: "5px 0 0 0", color: "#d70f64" }}>Rs {userProfile?.walletBalance || 0}</h3>
           </div>
         </div>
 
-        {/* Form */}
+        {/* Editable Form */}
         <form onSubmit={handleSave} style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
           <div>
             <label style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "14px", fontWeight: "bold", color: "#666", marginBottom: "8px" }}><User size={16} /> Full Name</label>
